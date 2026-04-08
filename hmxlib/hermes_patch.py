@@ -88,6 +88,7 @@ def patch_run_agent() -> None:
             return False
 
         try:
+            import fcntl
             from hermes_cli.codex_account_registry import (
                 classify_codex_account_condition,
                 load_codex_account_registry,
@@ -100,152 +101,231 @@ def patch_run_agent() -> None:
             logger.debug("Codex account rotation helper import failed: %s", exc)
             return False
 
-        registry_path, live_auth = resolve_codex_account_paths()
-        registry = load_codex_account_registry(registry_path)
-        if not isinstance(registry, dict):
-            return False
-
-        current = registry.get("active")
-        accounts = registry.get("accounts") if isinstance(registry.get("accounts"), dict) else {}
-        if current not in accounts:
-            return False
-
-        classified = classify_codex_account_condition(
-            status_code=status_code,
-            error_text=error_text,
-            error_body=error_body,
-        )
-        if not classified.get("should_rotate"):
-            return False
-
-        try:
-            self._record_codex_account_rotation_condition(
-                registry_path,
-                registry,
-                current,
-                classified=classified,
-            )
-        except Exception as exc:
-            logger.debug("Codex account condition write failed: %s", exc)
-
-        if not registry.get("auto_switch_on_limit", True):
-            return False
-
-        previous_target = None
-        if live_auth.is_symlink():
-            try:
-                previous_target = live_auth.resolve()
-            except Exception:
-                previous_target = None
-        elif live_auth.exists():
-            previous_target = live_auth
-        previous_active = current
-
-        while True:
-            next_alias = select_next_codex_account(accounts, current)
-            if not next_alias:
-                break
-
-            next_info = accounts.get(next_alias) or {}
-            next_file = next_info.get("file")
-            if not next_file:
-                self._record_codex_account_rotation_condition(
-                    registry_path,
-                    registry,
-                    next_alias,
-                    classified={
-                        "scenario": "local_credentials_missing",
-                        "disable_account": True,
-                        "meta": {"code": "auth_file_missing"},
-                    },
-                )
-                continue
-
-            target = registry_path.parent / "auth" / str(next_file)
-            if not target.is_file():
-                self._record_codex_account_rotation_condition(
-                    registry_path,
-                    registry,
-                    next_alias,
-                    classified={
-                        "scenario": "local_credentials_missing",
-                        "disable_account": True,
-                        "meta": {"code": "auth_file_missing"},
-                    },
-                )
-                continue
-
-            try:
-                swap_live_auth_symlink(live_auth, target)
-                registry["active"] = next_alias
-                acct = accounts.get(next_alias)
-                if isinstance(acct, dict):
-                    acct["last_selected_at"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-                save_codex_account_registry(registry_path, registry)
-
-                from hermes_cli.auth import resolve_codex_runtime_credentials
-                creds = resolve_codex_runtime_credentials(force_refresh=False)
-
-                api_key = creds.get("api_key")
-                base_url = creds.get("base_url")
-                if not isinstance(api_key, str) or not api_key.strip():
-                    raise RuntimeError("rotated Codex account missing api_key")
-                if not isinstance(base_url, str) or not base_url.strip():
-                    raise RuntimeError("rotated Codex account missing base_url")
-
-                self.api_key = api_key
-                self.base_url = base_url.strip().rstrip("/")
-                self._client_kwargs["api_key"] = self.api_key
-                self._client_kwargs["base_url"] = self.base_url
-
-                if not self._replace_primary_openai_client(reason=f"codex_account_rotation_{reason_label}"):
-                    raise RuntimeError("failed to rebuild client after account rotation")
-            except Exception as exc:
-                logger.debug("Codex account rotation candidate %s failed: %s", next_alias, exc)
-                failed_condition = classify_codex_account_condition(
-                    status_code=getattr(exc, "status_code", None),
-                    error_text=str(exc),
-                    error_body=getattr(exc, "body", None),
-                )
-                if failed_condition.get("scenario") in {
-                    "deactivated",
-                    "billing_inactive",
-                    "auth_invalid",
-                    "local_credentials_missing",
-                }:
-                    try:
-                        self._record_codex_account_rotation_condition(
-                            registry_path,
-                            registry,
-                            next_alias,
-                            classified=failed_condition,
-                        )
-                    except Exception as state_exc:
-                        logger.debug("Codex candidate failure state write failed: %s", state_exc)
-                    continue
+        def _parse_rotation_dt(value):
+            if not value:
+                return None
+            if isinstance(value, (int, float)):
                 try:
-                    if previous_target is not None:
-                        swap_live_auth_symlink(live_auth, previous_target)
-                    registry["active"] = previous_active
-                    save_codex_account_registry(registry_path, registry)
-                except Exception as rollback_exc:
-                    logger.debug("Codex account rotation rollback failed: %s", rollback_exc)
+                    return datetime.utcfromtimestamp(int(value))
+                except Exception:
+                    return None
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return None
+                try:
+                    if text.endswith('Z'):
+                        text = text[:-1] + '+00:00'
+                    parsed = datetime.fromisoformat(text)
+                    if parsed.tzinfo is not None:
+                        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                    return parsed
+                except Exception:
+                    return None
+            return None
+
+        def _cooldown_seconds(info, now_dt):
+            limit = info.get('limit') if isinstance(info, dict) and isinstance(info.get('limit'), dict) else {}
+            if str(limit.get('state') or '').strip().lower() != 'limited':
+                return 0
+            reset_at = _parse_rotation_dt(limit.get('reset_at'))
+            if reset_at is None:
+                reset_at = _parse_rotation_dt(limit.get('resets_at'))
+            if reset_at is None and isinstance(limit.get('resets_in_seconds'), (int, float)):
+                observed = _parse_rotation_dt(limit.get('observed_at'))
+                if observed is not None:
+                    reset_at = observed + __import__('datetime').timedelta(seconds=max(0, int(float(limit.get('resets_in_seconds')))))
+            if reset_at is None:
+                return 1
+            return max(0, int((reset_at - now_dt).total_seconds()))
+
+        def _candidate_is_blocked(alias, info, now_dt):
+            if not isinstance(info, dict) or info.get('disabled'):
+                return True, 'disabled'
+            cooldown = _cooldown_seconds(info, now_dt)
+            if cooldown > 0:
+                return True, f'cooldown={cooldown}s'
+            return False, None
+
+        def _rotation_candidates(accounts, current_alias, now_dt):
+            source_current = current_alias
+            search_current = current_alias
+            attempted = {current_alias}
+            ordered = []
+            while True:
+                next_alias = select_next_codex_account(accounts, search_current)
+                if not next_alias or next_alias in attempted:
+                    break
+                attempted.add(next_alias)
+                ordered.append(next_alias)
+                search_current = next_alias
+            if not ordered:
+                for alias, info in sorted(
+                    ((alias, info) for alias, info in accounts.items() if alias != source_current),
+                    key=lambda item: (int((item[1] or {}).get('priority', 100)), item[0]),
+                ):
+                    if alias not in ordered:
+                        ordered.append(alias)
+            return ordered
+
+        registry_path, live_auth = resolve_codex_account_paths()
+        lock_path = live_auth.with_name('auth.lock')
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, 'a+', encoding='utf-8') as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            registry = load_codex_account_registry(registry_path)
+            if not isinstance(registry, dict):
                 return False
 
+            current = registry.get("active")
+            accounts = registry.get("accounts") if isinstance(registry.get("accounts"), dict) else {}
+            if current not in accounts:
+                logger.debug("Codex account rotation skipped: current not in accounts")
+                return False
+
+            classified = classify_codex_account_condition(
+                status_code=status_code,
+                error_text=error_text,
+                error_body=error_body,
+            )
+            if not classified.get("should_rotate"):
+                return False
+
+            try:
+                self._record_codex_account_rotation_condition(
+                    registry_path,
+                    registry,
+                    current,
+                    classified=classified,
+                )
+            except Exception as exc:
+                logger.debug("Codex account condition write failed: %s", exc)
+
+            if not registry.get("auto_switch_on_limit", True):
+                return False
+
+            previous_target = None
+            if live_auth.is_symlink():
+                try:
+                    previous_target = live_auth.resolve()
+                except Exception:
+                    previous_target = None
+            elif live_auth.exists():
+                previous_target = live_auth
+            previous_active = current
+            now_dt = datetime.utcnow().replace(microsecond=0)
+            blocked_candidates = []
+
+            for next_alias in _rotation_candidates(accounts, current, now_dt):
+                next_info = accounts.get(next_alias) or {}
+                blocked, blocked_reason = _candidate_is_blocked(next_alias, next_info, now_dt)
+                if blocked:
+                    blocked_candidates.append(f"{next_alias}:{blocked_reason}")
+                    continue
+
+                next_file = next_info.get("file")
+                if not next_file:
+                    self._record_codex_account_rotation_condition(
+                        registry_path,
+                        registry,
+                        next_alias,
+                        classified={
+                            "scenario": "local_credentials_missing",
+                            "disable_account": True,
+                            "meta": {"code": "auth_file_missing"},
+                        },
+                    )
+                    continue
+
+                target = registry_path.parent / "auth" / str(next_file)
+                if not target.is_file():
+                    self._record_codex_account_rotation_condition(
+                        registry_path,
+                        registry,
+                        next_alias,
+                        classified={
+                            "scenario": "local_credentials_missing",
+                            "disable_account": True,
+                            "meta": {"code": "auth_file_missing"},
+                        },
+                    )
+                    continue
+
+                try:
+                    swap_live_auth_symlink(live_auth, target)
+                    registry["active"] = next_alias
+                    acct = accounts.get(next_alias)
+                    if isinstance(acct, dict):
+                        acct["last_selected_at"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                    save_codex_account_registry(registry_path, registry)
+
+                    from hermes_cli.auth import resolve_codex_runtime_credentials
+                    creds = resolve_codex_runtime_credentials(force_refresh=False)
+
+                    api_key = creds.get("api_key")
+                    base_url = creds.get("base_url")
+                    if not isinstance(api_key, str) or not api_key.strip():
+                        raise RuntimeError("rotated Codex account missing api_key")
+                    if not isinstance(base_url, str) or not base_url.strip():
+                        raise RuntimeError("rotated Codex account missing base_url")
+
+                    self.api_key = api_key
+                    self.base_url = base_url.strip().rstrip("/")
+                    self._client_kwargs["api_key"] = self.api_key
+                    self._client_kwargs["base_url"] = self.base_url
+
+                    if not self._replace_primary_openai_client(reason=f"codex_account_rotation_{reason_label}"):
+                        raise RuntimeError("failed to rebuild client after account rotation")
+                except Exception as exc:
+                    logger.debug("Codex account rotation candidate %s failed: %s", next_alias, exc)
+                    failed_condition = classify_codex_account_condition(
+                        status_code=getattr(exc, "status_code", None),
+                        error_text=str(exc),
+                        error_body=getattr(exc, "body", None),
+                    )
+                    if failed_condition.get("scenario") in {
+                        "deactivated",
+                        "billing_inactive",
+                        "auth_invalid",
+                        "local_credentials_missing",
+                    }:
+                        try:
+                            self._record_codex_account_rotation_condition(
+                                registry_path,
+                                registry,
+                                next_alias,
+                                classified=failed_condition,
+                            )
+                        except Exception as state_exc:
+                            logger.debug("Codex candidate failure state write failed: %s", state_exc)
+                        continue
+                    try:
+                        if previous_target is not None:
+                            swap_live_auth_symlink(live_auth, previous_target)
+                        registry["active"] = previous_active
+                        save_codex_account_registry(registry_path, registry)
+                    except Exception as rollback_exc:
+                        logger.debug("Codex account rotation rollback failed: %s", rollback_exc)
+                    return False
+
+                self._vprint(
+                    f"{self.log_prefix}🔄 Codex account rotated ({classified.get('scenario')}). Switched account: {current} → {next_alias}",
+                    force=True,
+                )
+                return True
+
+            try:
+                if previous_target is not None:
+                    swap_live_auth_symlink(live_auth, previous_target)
+                registry["active"] = previous_active
+                save_codex_account_registry(registry_path, registry)
+            except Exception as rollback_exc:
+                logger.debug("Codex account rotation rollback failed: %s", rollback_exc)
             self._vprint(
-                f"{self.log_prefix}🔄 Codex account rotated ({classified.get('scenario')}). Switched account: {current} → {next_alias}",
+                f"{self.log_prefix}⛔ Codex rotation exhausted: no viable account after {current}; blocked={', '.join(blocked_candidates) if blocked_candidates else 'none'}",
                 force=True,
             )
-            return True
-
-        try:
-            if previous_target is not None:
-                swap_live_auth_symlink(live_auth, previous_target)
-            registry["active"] = previous_active
-            save_codex_account_registry(registry_path, registry)
-        except Exception as rollback_exc:
-            logger.debug("Codex account rotation rollback failed: %s", rollback_exc)
-        return False
+            return False
 
     def _try_rotate_codex_account_on_limit(self, *, error_text: str = "") -> bool:
         return self._try_rotate_codex_account_on_error(

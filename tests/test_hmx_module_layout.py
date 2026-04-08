@@ -31,3 +31,14 @@ def test_library_cli_exports_parser_and_main():
     assert args.command == 'list'
     assert callable(args.func)
     assert runtime.__version__ == '0.1.0'
+
+
+def test_runtime_module_resolves_repo_hmx_source_by_default():
+    sys.path.insert(0, str(REPO_ROOT))
+    runtime = importlib.import_module('hmxlib.runtime')
+    resolved = runtime.resolve_hmx_source_path(
+        current_path=REPO_ROOT / 'hmxlib' / 'runtime.py',
+        bin_path=REPO_ROOT / 'bin' / 'hmx',
+        default_source_path=REPO_ROOT / 'hmx.py',
+    )
+    assert resolved == (REPO_ROOT / 'hmx.py').resolve()

@@ -477,8 +477,9 @@ def test_patch_run_agent_prefers_non_limited_candidate_even_if_current_is_coolin
     patched = run_agent_path.read_text()
 
     assert "current not in accounts" in patched
-    assert "next_alias = select_next_codex_account(accounts, current)" in patched
-    assert "while True:" in patched
+    assert "next_alias = select_next_codex_account(accounts, search_current)" in patched
+    assert "with open(lock_path, 'a+', encoding='utf-8') as lock_handle:" in patched
+    assert "Codex rotation exhausted: no viable account" in patched
     assert "swap_live_auth_symlink(live_auth, target)" in patched
 
 
@@ -566,6 +567,39 @@ def test_run_codex_rotation_smoke_test_passes():
     assert result["fallback_called"] is False
     assert result["client_base_url"] == "https://example.invalid/codex"
     assert result["limit_reset_at"]
+
+
+def test_ordered_accounts_skips_limited_candidates_until_reset(tmp_path):
+    hmx = load_hmx_module()
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir(parents=True)
+    write_auth(auth_dir / "main.json")
+    write_auth(auth_dir / "backup.json")
+    write_auth(auth_dir / "cooling.json")
+
+    hmx.AUTH_DIR = auth_dir
+
+    registry = {
+        "active": "main",
+        "accounts": {
+            "main": {"file": "main.json", "priority": 1},
+            "backup": {"file": "backup.json", "priority": 2},
+            "cooling": {
+                "file": "cooling.json",
+                "priority": 3,
+                "limit": {
+                    "state": "limited",
+                    "observed_at": "2026-04-08T04:00:00Z",
+                    "reset_at": "2026-04-08T04:20:00Z",
+                    "resets_in_seconds": 1200,
+                },
+            },
+        },
+    }
+
+    names = hmx.ordered_accounts(registry, now=dt.datetime(2026, 4, 8, 4, 5, 0))
+
+    assert names == ["main", "backup", "cooling"]
 
 
 def test_patch_auth_store_symlink_preservation_keeps_live_auth_symlink(tmp_path):

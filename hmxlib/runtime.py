@@ -56,6 +56,8 @@ def resolve_hmx_source_path(
 
     if current == entrypoint and source_fallback.exists():
         return source_fallback
+    if current.name == 'runtime.py' and current.parent.name == 'hmxlib' and source_fallback.exists():
+        return source_fallback
     return current
 
 

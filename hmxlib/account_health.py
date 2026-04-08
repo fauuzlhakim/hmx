@@ -354,7 +354,15 @@ def describe_account_health(alias: str, info: dict[str, Any], auth_path: Path, n
         return {'status': 'empty', 'detail': 'token missing', 'reset': reset, 'five_h': five_h, 'auth_status': auth_status}
 
     probe = fresh_probe_result(info, now=now)
-    if probe:
+    probe_observed_at = parse_iso8601_utc(probe.get('observed_at')) if probe else None
+    stale_limited_probe = bool(
+        probe
+        and str(probe.get('status') or probe.get('scenario') or '').strip().lower() == 'limited'
+        and probe_observed_at is not None
+        and last_selected_at is not None
+        and last_selected_at > probe_observed_at
+    )
+    if probe and not stale_limited_probe:
         status = str(probe.get('status') or probe.get('scenario') or 'unknown').strip().lower()
         detail = str(probe.get('detail') or probe.get('code') or 'probe result').strip()
         if status == 'available':
@@ -434,9 +442,17 @@ def describe_account_health(alias: str, info: dict[str, Any], auth_path: Path, n
             'auth_status': auth_status,
         }
 
+    detail = 'no limit telemetry'
+    if stale_limit and stale_limited_probe:
+        detail = 'stale limit + probe telemetry'
+    elif stale_limit:
+        detail = 'stale limit telemetry'
+    elif stale_limited_probe:
+        detail = 'stale limited probe'
+
     return {
         'status': 'unknown',
-        'detail': 'stale limit telemetry' if stale_limit else 'no limit telemetry',
+        'detail': detail,
         'reset': reset,
         'five_h': five_h,
         'auth_status': auth_status,
