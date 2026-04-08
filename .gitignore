@@ -9,3 +9,7 @@ venv/
 .venv/
 coverage.xml
 htmlcov/
+*.egg-info/
+dist/
+build/
+auth.json

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-mux"
+version = "0.1.0"
+description = "Single-home multi-account manager for Hermes Codex auth pools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Hermes Agent" }
+]
+dependencies = [
+  "PyYAML>=6.0",
+]
+keywords = ["hermes", "codex", "cli", "account-pooling", "multi-account"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Utilities",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+hmx = "hmx:main"
+
+[tool.setuptools]
+py-modules = ["hmx"]
+
+[tool.setuptools.packages.find]
+include = ["hmxlib*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
