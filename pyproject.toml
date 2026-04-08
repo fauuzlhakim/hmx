@@ -28,6 +28,11 @@ classifiers = [
   "Topic :: Utilities",
 ]
 
+[project.urls]
+Homepage = "https://github.com/fauuzlhakim/hmx"
+Repository = "https://github.com/fauuzlhakim/hmx.git"
+Issues = "https://github.com/fauuzlhakim/hmx/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",

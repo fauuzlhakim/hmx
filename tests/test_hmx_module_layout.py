@@ -25,7 +25,9 @@ def test_hmx_is_split_into_readable_modules():
 def test_library_cli_exports_parser_and_main():
     sys.path.insert(0, str(REPO_ROOT))
     cli = importlib.import_module('hmxlib.cli')
+    runtime = importlib.import_module('hmxlib.runtime')
     parser = cli.build_parser()
     args = parser.parse_args(['list'])
     assert args.command == 'list'
     assert callable(args.func)
+    assert runtime.__version__ == '0.1.0'

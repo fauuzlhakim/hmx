@@ -17,7 +17,10 @@ try:
 except Exception:
     yaml = None
 
-ROOT_HOME = Path(os.environ.get('HMX_ROOT_HOME', '/root/.hermes'))
+
+__version__ = '0.1.0'
+HOME_DIR = Path.home()
+ROOT_HOME = Path(os.environ.get('HMX_ROOT_HOME', str(HOME_DIR / '.hermes'))).expanduser()
 MUX_DIR = ROOT_HOME / 'accounts'
 AUTH_DIR = MUX_DIR / 'auth'
 REGISTRY_PATH = MUX_DIR / 'registry.json'
@@ -25,13 +28,17 @@ LIVE_AUTH_PATH = ROOT_HOME / 'auth.json'
 LIVE_AUTH_LOCK = ROOT_HOME / 'auth.lock'
 DEFAULT_PROVIDER = 'openai-codex'
 BASE_URL = 'https://chatgpt.com/backend-api/codex'
-LEGACY_REGISTRY = Path('/root/.config/hermes-mux/registry.json')
-LEGACY_HOMES = ['/root/.hermes-b', '/root/.hermes-c']
-HERMES_REPO_PATH = Path('/root/.hermes/hermes-agent')
+LEGACY_REGISTRY = Path(os.environ.get('HMX_LEGACY_REGISTRY', str(HOME_DIR / '.config' / 'hermes-mux' / 'registry.json'))).expanduser()
+LEGACY_HOMES = [
+    str(Path(p).expanduser())
+    for p in os.environ.get('HMX_LEGACY_HOMES', f'{HOME_DIR / ".hermes-b"}:{HOME_DIR / ".hermes-c"}').split(':')
+    if p.strip()
+]
+HERMES_REPO_PATH = Path(os.environ.get('HMX_HERMES_REPO_PATH', str(ROOT_HOME / 'hermes-agent'))).expanduser()
 HERMES_RUN_AGENT_PATH = HERMES_REPO_PATH / 'run_agent.py'
 HERMES_AUTH_MODULE_PATH = HERMES_REPO_PATH / 'hermes_cli' / 'auth.py'
-HMX_BIN_PATH = Path('/root/.local/bin/hmx')
-HMX_DEFAULT_SOURCE_PATH = Path('/root/hermes-mux/hmx.py')
+HMX_BIN_PATH = Path(os.environ.get('HMX_BIN_PATH', str(HOME_DIR / '.local' / 'bin' / 'hmx'))).expanduser()
+HMX_DEFAULT_SOURCE_PATH = Path(os.environ.get('HMX_DEFAULT_SOURCE_PATH', str(Path(__file__).resolve().parents[1] / 'hmx.py'))).expanduser()
 
 
 def resolve_hmx_source_path(

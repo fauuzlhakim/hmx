@@ -1,6 +1,6 @@
 import argparse
 
-from .runtime import DEFAULT_PROVIDER, MODE_PRESETS
+from .runtime import DEFAULT_PROVIDER, MODE_PRESETS, __version__
 from .commands import (
     cmd_add, cmd_annotate, cmd_auto, cmd_capture, cmd_current, cmd_disable, cmd_doctor,
     cmd_enable, cmd_explain, cmd_hop, cmd_import, cmd_init, cmd_list, cmd_login, cmd_mode,
@@ -10,6 +10,7 @@ from .commands import (
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog='hmx', description='Hermes single-home multi-account manager')
+    p.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     sub = p.add_subparsers(dest='command', required=True)
 
     sp = sub.add_parser('init', help='migrate current/legacy auths into one account pool under ~/.hermes/accounts')

@@ -1,5 +1,9 @@
 # hmx
 
+![CI](https://github.com/fauuzlhakim/hmx/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/github/license/fauuzlhakim/hmx)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 hmx is a small CLI that lets one Hermes installation manage multiple auth slots without splitting state across multiple `~/.hermes-*` homes.
 
 It keeps one real Hermes home, stores multiple auth files in a pooled account registry, and switches the live `auth.json` symlink between accounts. It also includes helpers for patching Hermes so a Codex `usage_limit_reached` condition can rotate to the next available account automatically.
@@ -192,8 +196,13 @@ hmx unpatch-hermes
 
 ## Environment variables
 
-- `HMX_ROOT_HOME`: Hermes home to manage. Defaults to `/root/.hermes` in the current implementation.
+- `HMX_ROOT_HOME`: Hermes home to manage. Defaults to `~/.hermes`.
+- `HMX_HERMES_REPO_PATH`: override the upstream Hermes checkout path used by patch/update commands.
+- `HMX_BIN_PATH`: override the wrapper install path for the generated `hmx` launcher.
 - `HMX_SOURCE_PATH`: optional override for resolving the source file used by the entrypoint wrapper logic.
+- `HMX_DEFAULT_SOURCE_PATH`: optional fallback source path for wrapper generation.
+- `HMX_LEGACY_REGISTRY`: override legacy migration registry location.
+- `HMX_LEGACY_HOMES`: colon-separated list of legacy Hermes homes to inspect during migration.
 
 ## Testing
 
@@ -220,6 +229,20 @@ README.md               public documentation
 CONTRIBUTING.md         contributor workflow
 ```
 
+## Example output
+
+`hmx list` is designed to stay compact and operator-friendly:
+
+```text
+ACCOUNT      PROVIDER      STATUS     5H   RESET   DETAIL
+main         openai-codex  active     -    -       currently selected
+backup-alt   openai-codex  limited    30%  1h30m   usage limit
+research     openai-codex  available  -    -       live probe ok
+
+active: main
+auto-rotate: on
+```
+
 ## Limitations
 
 - patch/update commands are coupled to the upstream Hermes repository layout expected by this project
@@ -230,6 +253,10 @@ CONTRIBUTING.md         contributor workflow
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
