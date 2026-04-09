@@ -569,6 +569,28 @@ def test_run_codex_rotation_smoke_test_passes():
     assert result["limit_reset_at"]
 
 
+def test_ensure_codex_account_registry_helper_writes_importable_module(tmp_path):
+    hmx = load_hmx_module()
+    helper_path = tmp_path / "hermes_cli" / "codex_account_registry.py"
+    hmx.HERMES_CODEX_ACCOUNT_REGISTRY_PATH = helper_path
+
+    hmx.ensure_codex_account_registry_helper()
+    hmx.verify_codex_account_registry_compile()
+
+    spec = importlib.util.spec_from_file_location("patched_codex_registry", helper_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    classified = module.classify_codex_account_condition(
+        status_code=429,
+        error_text="HTTP 429 {'type': 'usage_limit_reached', 'resets_in_seconds': 1200}",
+        error_body=None,
+    )
+    assert classified["scenario"] == "limited"
+    assert classified["should_rotate"] is True
+    assert module.extract_codex_account_error_metadata("{'resets_in_seconds': 1200}")["resets_in_seconds"] == 1200
+
+
 def test_ordered_accounts_skips_limited_candidates_until_reset(tmp_path):
     hmx = load_hmx_module()
     auth_dir = tmp_path / "auth"
@@ -672,10 +694,12 @@ def test_cmd_patch_hermes_patches_run_agent_and_auth_then_repairs_live_auth(monk
     calls = []
 
     monkeypatch.setattr(hmx, "ensure_hmx_entrypoint_wrapper", lambda: calls.append(("wrapper", None)))
+    monkeypatch.setattr(hmx, "ensure_codex_account_registry_helper", lambda: calls.append(("helper", None)))
     monkeypatch.setattr(hmx, "patch_run_agent", lambda: calls.append(("patch_run_agent", None)))
     monkeypatch.setattr(hmx, "patch_auth_store_symlink_preservation", lambda: calls.append(("patch_auth", None)))
     monkeypatch.setattr(hmx, "verify_run_agent_compile", lambda: calls.append(("verify_run_agent", None)))
     monkeypatch.setattr(hmx, "verify_auth_module_compile", lambda: calls.append(("verify_auth", None)))
+    monkeypatch.setattr(hmx, "verify_codex_account_registry_compile", lambda: calls.append(("verify_helper", None)))
     monkeypatch.setattr(hmx, "repair_live_auth_from_registry", lambda: calls.append(("repair_live_auth", None)) or True)
 
     buf = io.StringIO()
@@ -686,15 +710,18 @@ def test_cmd_patch_hermes_patches_run_agent_and_auth_then_repairs_live_auth(monk
     assert exit_code == 0
     assert calls == [
         ("wrapper", None),
+        ("helper", None),
         ("patch_run_agent", None),
         ("patch_auth", None),
         ("verify_run_agent", None),
         ("verify_auth", None),
+        ("verify_helper", None),
         ("repair_live_auth", None),
     ]
     assert "patched Hermes run_agent" in output
+    assert "installed hermes_cli/codex_account_registry.py helper" in output
     assert "patched Hermes auth store writes to preserve hmx-selected auth symlinks" in output
-    assert "verified: run_agent.py and hermes_cli/auth.py compile cleanly" in output
+    assert "verified: run_agent.py, hermes_cli/auth.py, and hermes_cli/codex_account_registry.py compile cleanly" in output
 
 
 def test_cmd_update_hermes_runs_update_then_repatches_and_smokes(monkeypatch):

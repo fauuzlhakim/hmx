@@ -37,6 +37,7 @@ LEGACY_HOMES = [
 HERMES_REPO_PATH = Path(os.environ.get('HMX_HERMES_REPO_PATH', str(ROOT_HOME / 'hermes-agent'))).expanduser()
 HERMES_RUN_AGENT_PATH = HERMES_REPO_PATH / 'run_agent.py'
 HERMES_AUTH_MODULE_PATH = HERMES_REPO_PATH / 'hermes_cli' / 'auth.py'
+HERMES_CODEX_ACCOUNT_REGISTRY_PATH = HERMES_REPO_PATH / 'hermes_cli' / 'codex_account_registry.py'
 HMX_BIN_PATH = Path(os.environ.get('HMX_BIN_PATH', str(HOME_DIR / '.local' / 'bin' / 'hmx'))).expanduser()
 HMX_DEFAULT_SOURCE_PATH = Path(os.environ.get('HMX_DEFAULT_SOURCE_PATH', str(Path(__file__).resolve().parents[1] / 'hmx.py'))).expanduser()
 

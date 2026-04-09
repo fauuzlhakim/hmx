@@ -10,9 +10,197 @@ import types
 from typing import Any
 
 from .runtime import (
-    HERMES_AUTH_MODULE_PATH, HERMES_REPO_PATH, HERMES_RUN_AGENT_PATH,
+    HERMES_AUTH_MODULE_PATH, HERMES_CODEX_ACCOUNT_REGISTRY_PATH, HERMES_REPO_PATH, HERMES_RUN_AGENT_PATH,
     HMX_BIN_PATH, HMX_SOURCE_PATH,
 )
+
+CODEX_ACCOUNT_REGISTRY_HELPER = '''from __future__ import annotations
+
+import ast
+import datetime as dt
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+ROOT_HOME = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
+MUX_DIR = ROOT_HOME / "accounts"
+AUTH_DIR = MUX_DIR / "auth"
+REGISTRY_PATH = Path(os.environ.get("HERMES_ACCOUNT_REGISTRY", str(MUX_DIR / "registry.json"))).expanduser()
+LIVE_AUTH_PATH = Path(os.environ.get("HERMES_AUTH_FILE_PATH", str(ROOT_HOME / "auth.json"))).expanduser()
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.utcnow().replace(microsecond=0)
+
+
+def _now_iso() -> str:
+    return _utcnow().isoformat() + "Z"
+
+
+def _parse_dt(value: Any) -> dt.datetime | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return dt.datetime.utcfromtimestamp(int(value))
+        except Exception:
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            parsed = dt.datetime.fromisoformat(text)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+            return parsed
+        except Exception:
+            return None
+    return None
+
+
+def resolve_codex_account_paths() -> tuple[Path, Path]:
+    return REGISTRY_PATH, LIVE_AUTH_PATH
+
+
+def load_codex_account_registry(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"schema": 2, "accounts": {}, "active": None, "auto_switch_on_limit": True}
+    data = json.loads(path.read_text() or "{}")
+    if not isinstance(data, dict):
+        return {"schema": 2, "accounts": {}, "active": None, "auto_switch_on_limit": True}
+    data.setdefault("schema", 2)
+    data.setdefault("accounts", {})
+    data.setdefault("active", None)
+    data.setdefault("auto_switch_on_limit", True)
+    return data
+
+
+def save_codex_account_registry(path: Path, registry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    registry["updated_at"] = _now_iso()
+    path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\\n")
+
+
+def swap_live_auth_symlink(live_auth: Path, target: Path) -> None:
+    live_auth.parent.mkdir(parents=True, exist_ok=True)
+    if live_auth.exists() or live_auth.is_symlink():
+        live_auth.unlink()
+    live_auth.symlink_to(target)
+
+
+def _account_sort_key(alias: str, info: dict[str, Any], now: dt.datetime) -> tuple[int, int, str]:
+    if info.get("disabled"):
+        group = 3
+    else:
+        limit = info.get("limit") if isinstance(info.get("limit"), dict) else {}
+        reset_at = _parse_dt(limit.get("reset_at"))
+        if reset_at and reset_at > now and str(limit.get("state") or "").strip().lower() == "limited":
+            group = 2
+        else:
+            group = 1
+    return (group, int(info.get("priority", 100)), alias)
+
+
+def select_next_codex_account(accounts: dict[str, Any], current: str | None) -> str | None:
+    now = _utcnow()
+    ordered = [
+        alias
+        for alias, _ in sorted(
+            ((alias, info if isinstance(info, dict) else {}) for alias, info in (accounts or {}).items()),
+            key=lambda item: _account_sort_key(item[0], item[1], now),
+        )
+    ]
+    if not ordered:
+        return None
+    if current not in ordered:
+        return ordered[0]
+    idx = ordered.index(current)
+    if len(ordered) == 1:
+        return None
+    return ordered[(idx + 1) % len(ordered)]
+
+
+def extract_codex_account_error_metadata(error_text: str = "", error_body: Any = None) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    if isinstance(error_body, dict):
+        for key in ("type", "message", "plan_type", "resets_at", "resets_in_seconds", "eligible_promo"):
+            if error_body.get(key) is not None:
+                meta[key] = error_body.get(key)
+    text = str(error_text or "")
+    if "{" in text and "}" in text:
+        snippet = text[text.find("{"): text.rfind("}") + 1]
+        try:
+            parsed = ast.literal_eval(snippet)
+            if isinstance(parsed, dict):
+                for key in ("type", "message", "plan_type", "resets_at", "resets_in_seconds", "eligible_promo"):
+                    if parsed.get(key) is not None:
+                        meta[key] = parsed.get(key)
+        except Exception:
+            pass
+    return meta
+
+
+def classify_codex_account_condition(*, status_code=None, error_text: str = "", error_body: Any = None) -> dict[str, Any]:
+    text = str(error_text or "")
+    lowered = text.lower()
+    meta = extract_codex_account_error_metadata(error_text, error_body=error_body)
+    if status_code == 429 or any(token in lowered for token in ("usage_limit_reached", "usage limit", "rate limit", "too many requests", "quota")):
+        return {"scenario": "limited", "should_rotate": True, "disable_account": False, "code": None, "meta": meta}
+    if status_code in {401, 403} or "token refresh failed with status 401" in lowered:
+        return {"scenario": "auth_invalid", "should_rotate": True, "disable_account": True, "code": "auth_invalid", "meta": meta}
+    if status_code == 402 or "billing" in lowered or "payment required" in lowered:
+        return {"scenario": "billing_inactive", "should_rotate": True, "disable_account": True, "code": "billing_inactive", "meta": meta}
+    if "deactivated" in lowered or "account disabled" in lowered:
+        return {"scenario": "deactivated", "should_rotate": True, "disable_account": True, "code": "deactivated", "meta": meta}
+    if any(token in lowered for token in ("no codex credentials stored", "missing api_key", "missing base_url", "auth_file_missing", "local_credentials_missing")):
+        return {"scenario": "local_credentials_missing", "should_rotate": True, "disable_account": True, "code": "local_credentials_missing", "meta": meta}
+    return {"scenario": "unknown", "should_rotate": False, "disable_account": False, "code": None, "meta": meta}
+
+
+def record_codex_account_limit_state(registry: dict[str, Any], current_alias: str, *, limit_meta: dict[str, Any] | None = None) -> None:
+    acct = registry.get("accounts", {}).get(current_alias)
+    if not isinstance(acct, dict):
+        return
+    limit_meta = limit_meta if isinstance(limit_meta, dict) else {}
+    observed_at = _now_iso()
+    limit = {"state": "limited", "observed_at": observed_at, "source": "codex_429"}
+    for key in ("plan_type", "resets_at", "resets_in_seconds"):
+        if limit_meta.get(key) is not None:
+            limit[key] = limit_meta.get(key)
+    if limit.get("resets_at") is not None:
+        parsed_reset = _parse_dt(limit.get("resets_at"))
+        if parsed_reset is not None:
+            limit["reset_at"] = parsed_reset.isoformat() + "Z"
+    if limit.get("reset_at") is None and isinstance(limit.get("resets_in_seconds"), (int, float)):
+        limit["reset_at"] = (_utcnow() + dt.timedelta(seconds=max(0, int(float(limit["resets_in_seconds"]))))).isoformat() + "Z"
+    acct["limit"] = limit
+
+
+def record_codex_account_deactivation_state(registry: dict[str, Any], current_alias: str, *, error_meta: dict[str, Any] | None = None, disable_account: bool = True) -> None:
+    acct = registry.get("accounts", {}).get(current_alias)
+    if not isinstance(acct, dict):
+        return
+    observed_at = _now_iso()
+    payload = {"state": "deactivated", "observed_at": observed_at, "source": "codex_deactivated"}
+    error_meta = error_meta if isinstance(error_meta, dict) else {}
+    if error_meta.get("code"):
+        payload["code"] = error_meta.get("code")
+    acct["deactivation"] = payload
+    if disable_account:
+        acct["disabled"] = True
+        acct["disabled_reason"] = payload.get("code") or "deactivated"
+        acct["disabled_at"] = observed_at
+'''
+
+
+def ensure_codex_account_registry_helper() -> None:
+    HERMES_CODEX_ACCOUNT_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    HERMES_CODEX_ACCOUNT_REGISTRY_PATH.write_text(CODEX_ACCOUNT_REGISTRY_HELPER)
+
 
 def patch_run_agent() -> None:
     path = HERMES_RUN_AGENT_PATH
@@ -489,6 +677,10 @@ def verify_run_agent_compile() -> None:
 
 def verify_auth_module_compile() -> None:
     subprocess.run(['python3', '-m', 'py_compile', str(HERMES_AUTH_MODULE_PATH)], check=True)
+
+
+def verify_codex_account_registry_compile() -> None:
+    subprocess.run(['python3', '-m', 'py_compile', str(HERMES_CODEX_ACCOUNT_REGISTRY_PATH)], check=True)
 
 
 def repair_live_auth_from_registry() -> bool:

@@ -16,9 +16,10 @@ from .account_health import (
     next_account, note_text, probe_accounts, render_table,
 )
 from .hermes_patch import (
-    describe_run_agent_patch, ensure_hmx_entrypoint_wrapper, patch_auth_store_symlink_preservation,
-    patch_run_agent, run_codex_rotation_smoke_test, unpatch_run_agent,
-    verify_auth_module_compile, verify_run_agent_compile,
+    describe_run_agent_patch, ensure_codex_account_registry_helper, ensure_hmx_entrypoint_wrapper,
+    patch_auth_store_symlink_preservation, patch_run_agent as patched_patch_run_agent,
+    run_codex_rotation_smoke_test, unpatch_run_agent as patched_unpatch_run_agent,
+    verify_auth_module_compile, verify_codex_account_registry_compile, verify_run_agent_compile,
 )
 
 def hermes_cmd() -> list[str]:
@@ -42,7 +43,7 @@ def run_hermes(extra_args: list[str], replace: bool = True) -> int:
 
 
 
-def patch_run_agent() -> None:
+def _legacy_patch_run_agent() -> None:
     path = HERMES_RUN_AGENT_PATH
     text = path.read_text()
     marker = '    def _try_refresh_codex_client_credentials(self, *, force: bool = True) -> bool:\n'
@@ -388,7 +389,7 @@ def patch_auth_store_symlink_preservation() -> None:
     text = text[:start] + replacement + text[end + 1:]
     path.write_text(text)
 
-def unpatch_run_agent() -> None:
+def _legacy_unpatch_run_agent() -> None:
     path = Path('/root/.hermes/hermes-agent/run_agent.py')
     text = path.read_text()
     marker = '    def _try_refresh_codex_client_credentials(self, *, force: bool = True) -> bool:\n'
@@ -404,6 +405,11 @@ def unpatch_run_agent() -> None:
     if patched in text:
         text = text.replace(patched, old)
     path.write_text(text)
+
+
+patch_run_agent = patched_patch_run_agent
+unpatch_run_agent = patched_unpatch_run_agent
+
 
 def cmd_init(args: argparse.Namespace) -> int:
     registry = load_registry()
@@ -756,18 +762,23 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
 def cmd_patch_hermes(args: argparse.Namespace) -> int:
     ensure_hmx_entrypoint_wrapper()
+    ensure_codex_account_registry_helper()
     patch_run_agent()
     patch_auth_store_symlink_preservation()
     try:
         verify_run_agent_compile()
         verify_auth_module_compile()
+        verify_codex_account_registry_compile()
     except Exception as exc:
-        err(f'patched Hermes overlay but verification failed: {exc}')
-    repair_live_auth_from_registry()
+        err(f'compile verification failed after patching Hermes: {exc}')
+    repaired = repair_live_auth_from_registry()
     print('patched Hermes run_agent for automatic codex account rotation on usage-limit 429')
+    print('installed hermes_cli/codex_account_registry.py helper for live rotation/probe support')
     print('patched Hermes auth store writes to preserve hmx-selected auth symlinks')
-    print('verified: run_agent.py and hermes_cli/auth.py compile cleanly')
+    print('verified: run_agent.py, hermes_cli/auth.py, and hermes_cli/codex_account_registry.py compile cleanly')
     print(f'wrapper: {HMX_BIN_PATH} -> {HMX_SOURCE_PATH}')
+    if repaired:
+        print('repaired live auth symlink from registry')
     return 0
 
 
