@@ -689,6 +689,60 @@ def test_patch_auth_store_symlink_preservation_keeps_live_auth_symlink(tmp_path)
     assert payload["providers"]["openai-codex"] == {}
 
 
+def test_cmd_use_rejects_disabled_auth_invalid_account(monkeypatch, tmp_path):
+    hmx = load_hmx_module()
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir(parents=True)
+    write_auth(auth_dir / "bad.json")
+    hmx.AUTH_DIR = auth_dir
+    registry = {
+        "active": "bad",
+        "accounts": {
+            "bad": {
+                "file": "bad.json",
+                "disabled": True,
+                "disabled_reason": "auth_invalid",
+                "auth_failure": {"state": "auth_invalid", "code": "auth_invalid"},
+            }
+        },
+    }
+    monkeypatch.setattr(hmx, "load_registry", lambda: registry)
+
+    try:
+        hmx.cmd_use(argparse.Namespace(alias="bad", hermes_args=[], continue_latest=False, resume=None))
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("cmd_use should reject disabled auth_invalid account")
+
+
+
+def test_cmd_hop_skips_disabled_accounts(tmp_path):
+    hmx = load_hmx_module()
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir(parents=True)
+    write_auth(auth_dir / "main.json")
+    write_auth(auth_dir / "good.json")
+    hmx.AUTH_DIR = auth_dir
+    hmx.LIVE_AUTH_PATH = tmp_path / "auth.json"
+    registry = {
+        "active": "main",
+        "accounts": {
+            "main": {"file": "main.json", "priority": 1, "disabled": False},
+            "bad": {"file": "bad.json", "priority": 2, "disabled": True, "disabled_reason": "auth_invalid"},
+            "good": {"file": "good.json", "priority": 3, "disabled": False},
+        },
+    }
+    hmx.save_registry(registry)
+
+    try:
+        alias = hmx.next_account(registry, current="main")
+        assert alias == "good"
+    finally:
+        pass
+
+
+
 def test_cmd_patch_hermes_patches_run_agent_and_auth_then_repairs_live_auth(monkeypatch):
     hmx = load_hmx_module()
     calls = []

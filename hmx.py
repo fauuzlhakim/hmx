@@ -38,7 +38,7 @@ _SYNC_NAMES = [
     'describe_account_health', 'build_list_rows', 'render_table', 'list_summary_text', 'next_account',
     'hermes_cmd', 'normalize_hermes_args', 'run_hermes', 'import_auth_file', 'migrate_from_existing',
     'doctor_status', 'patch_run_agent', 'patch_auth_store_symlink_preservation', 'unpatch_run_agent',
-    'cmd_init', 'cmd_list', 'cmd_probe', 'cmd_rename', 'cmd_annotate', 'cmd_use', 'cmd_hop', 'cmd_import',
+    '_account_activation_guard', 'cmd_init', 'cmd_list', 'cmd_probe', 'cmd_rename', 'cmd_annotate', 'cmd_use', 'cmd_hop', 'cmd_import',
     'cmd_capture', 'cmd_add', 'cmd_login', 'cmd_remove', 'cmd_disable', 'cmd_enable', 'cmd_current',
     'cmd_mode', 'cmd_auto', 'cmd_doctor', 'describe_run_agent_patch', 'cmd_explain',
     'verify_run_agent_compile', 'verify_auth_module_compile', 'verify_codex_account_registry_compile', 'repair_live_auth_from_registry',
@@ -91,7 +91,7 @@ for _module, _names in [
     (_account_store, ['ensure_dirs', 'load_registry', 'save_registry', 'load_yaml', 'dump_yaml', 'ensure_base_config', 'read_auth_file', 'ensure_account_store_shape', 'auth_payload_summary', 'account_target', 'active_target', 'sync_live_auth_symlink', 'ensure_auth_lock', 'import_auth_file', 'migrate_from_existing', 'repair_live_auth_from_registry']),
     (_account_health, ['hermes_python', 'probe_result_age_seconds', 'fresh_probe_result', 'run_account_probe', 'apply_probe_result', 'probe_accounts', 'ordered_accounts', 'metadata_text', 'note_text', 'effective_account_summary', 'FIVE_HOURS_SECONDS', 'five_hour_window_remaining', 'describe_account_health', 'build_list_rows', 'render_table', 'list_summary_text', 'next_account', 'doctor_status']),
     (_hermes_patch, ['patch_run_agent', 'patch_auth_store_symlink_preservation', 'unpatch_run_agent', 'describe_run_agent_patch', 'verify_run_agent_compile', 'verify_auth_module_compile', 'verify_codex_account_registry_compile', 'ensure_codex_account_registry_helper', 'ensure_hmx_entrypoint_wrapper', 'run_codex_rotation_smoke_test']),
-    (_commands, ['hermes_cmd', 'normalize_hermes_args', 'run_hermes', 'cmd_init', 'cmd_list', 'cmd_probe', 'cmd_rename', 'cmd_annotate', 'cmd_use', 'cmd_hop', 'cmd_import', 'cmd_capture', 'cmd_add', 'cmd_login', 'cmd_remove', 'cmd_disable', 'cmd_enable', 'cmd_current', 'cmd_mode', 'cmd_auto', 'cmd_doctor', 'cmd_explain', 'cmd_patch_hermes', 'cmd_smoke', 'cmd_update_hermes', 'cmd_unpatch_hermes']),
+    (_commands, ['hermes_cmd', 'normalize_hermes_args', 'run_hermes', '_account_activation_guard', 'cmd_init', 'cmd_list', 'cmd_probe', 'cmd_rename', 'cmd_annotate', 'cmd_use', 'cmd_hop', 'cmd_import', 'cmd_capture', 'cmd_add', 'cmd_login', 'cmd_remove', 'cmd_disable', 'cmd_enable', 'cmd_current', 'cmd_mode', 'cmd_auto', 'cmd_doctor', 'cmd_explain', 'cmd_patch_hermes', 'cmd_smoke', 'cmd_update_hermes', 'cmd_unpatch_hermes']),
     (_cli, ['build_parser', 'main']),
 ]:
     for _name in _names:

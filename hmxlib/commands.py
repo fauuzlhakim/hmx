@@ -566,15 +566,29 @@ def cmd_annotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _account_activation_guard(alias: str, info: dict, *, allow_disabled: bool = False) -> None:
+    if not isinstance(info, dict):
+        err(f"unknown account '{alias}'")
+    if info.get('disabled') and not allow_disabled:
+        reason = str(info.get('disabled_reason') or '').strip()
+        suffix = f" (reason: {reason})" if reason else ''
+        err(f"account '{alias}' is disabled{suffix}")
+    auth_failure = info.get('auth_failure') if isinstance(info.get('auth_failure'), dict) else {}
+    failure_state = str(auth_failure.get('state') or '').strip().lower()
+    if failure_state == 'auth_invalid' and not allow_disabled:
+        detail = str(auth_failure.get('code') or info.get('disabled_reason') or 'auth_invalid').strip()
+        err(f"account '{alias}' is blocked: auth_invalid ({detail})")
+
+
 def cmd_use(args: argparse.Namespace) -> int:
     registry = load_registry()
     alias = args.alias or registry.get('active')
     if not alias or alias not in registry.get('accounts', {}):
         err('unknown account')
-    if registry['accounts'][alias].get('disabled'):
-        err(f"account '{alias}' is disabled")
+    info = registry['accounts'][alias]
+    _account_activation_guard(alias, info)
     registry['active'] = alias
-    registry['accounts'][alias]['last_selected_at'] = now_iso()
+    info['last_selected_at'] = now_iso()
     save_registry(registry)
     sync_live_auth_symlink(registry)
     extra_args = list(args.hermes_args)
@@ -591,8 +605,10 @@ def cmd_use(args: argparse.Namespace) -> int:
 def cmd_hop(args: argparse.Namespace) -> int:
     registry = load_registry()
     alias = next_account(registry, current=args.from_account or registry.get('active'))
+    info = registry['accounts'].get(alias)
+    _account_activation_guard(alias, info)
     registry['active'] = alias
-    registry['accounts'][alias]['last_selected_at'] = now_iso()
+    info['last_selected_at'] = now_iso()
     save_registry(registry)
     sync_live_auth_symlink(registry)
     extra_args = list(args.hermes_args)
