@@ -719,12 +719,17 @@ def test_cmd_use_rejects_disabled_auth_invalid_account(monkeypatch, tmp_path):
 
 def test_cmd_hop_skips_disabled_accounts(tmp_path):
     hmx = load_hmx_module()
-    auth_dir = tmp_path / "auth"
+    root_home = tmp_path / ".hermes"
+    mux_dir = root_home / "accounts"
+    auth_dir = mux_dir / "auth"
     auth_dir.mkdir(parents=True)
     write_auth(auth_dir / "main.json")
     write_auth(auth_dir / "good.json")
+    hmx.ROOT_HOME = root_home
+    hmx.MUX_DIR = mux_dir
     hmx.AUTH_DIR = auth_dir
-    hmx.LIVE_AUTH_PATH = tmp_path / "auth.json"
+    hmx.REGISTRY_PATH = mux_dir / "registry.json"
+    hmx.LIVE_AUTH_PATH = root_home / "auth.json"
     registry = {
         "active": "main",
         "accounts": {
@@ -735,11 +740,8 @@ def test_cmd_hop_skips_disabled_accounts(tmp_path):
     }
     hmx.save_registry(registry)
 
-    try:
-        alias = hmx.next_account(registry, current="main")
-        assert alias == "good"
-    finally:
-        pass
+    alias = hmx.next_account(registry, current="main")
+    assert alias == "good"
 
 
 
